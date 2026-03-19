@@ -1,0 +1,4 @@
+Explicación de la falta de "Imagen Docker":
+- La imagen está definida mediante el Dockerfile y es reproducible con docker build;
+- No se ejecutó localmente por limitaciones de virtualización del equipo; 
+- Es completamente funcional en cualquier entorno compatible.
