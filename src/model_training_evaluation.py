@@ -1,12 +1,11 @@
 """
 model_training_evaluation.py
-Versión final MLOps con guardado de modelo + threshold óptimo
+Versión profesional con optimización de threshold y múltiples modelos
 """
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import joblib
 
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
@@ -24,6 +23,7 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
     f1_score,
+    precision_recall_curve,
     recall_score
 )
 
@@ -71,13 +71,16 @@ def evaluate_thresholds(y_true, probs):
 
     for t in thresholds:
         preds = (probs >= t).astype(int)
+
         f1_0 = f1_score(y_true, preds, pos_label=0)
 
         if f1_0 > best_score:
             best_score = f1_0
             best_threshold = t
 
-    return best_threshold, best_score
+    print(f"\n Mejor threshold: {best_threshold:.2f} (F1_0={best_score:.4f})")
+
+    return best_threshold
 
 
 # =============================
@@ -98,7 +101,7 @@ def evaluate_models():
     models = {
         "LogisticRegression": LogisticRegression(
             max_iter=5000,
-            class_weight={0: 20, 1: 1},
+            class_weight={0:20, 1:1},
             C=0.5
         ),
 
@@ -127,7 +130,6 @@ def evaluate_models():
     }
 
     results = []
-    pipelines = {}  #  guardar pipelines
 
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
@@ -157,23 +159,50 @@ def evaluate_models():
         # =============================
         pipeline.fit(X_train, y_train)
 
-        #  Guardamos el pipeline
-        pipelines[name] = pipeline
-
         probs_test = pipeline.predict_proba(X_test)[:, 1]
 
         # =============================
-        # Threshold óptimo
+        # Feature importance (solo LogisticRegression)
         # =============================
-        best_threshold, best_score = evaluate_thresholds(y_test, probs_test)
+        if name == "LogisticRegression":
+
+            # Obtener nombres de features después del pipeline
+            feature_names = pipeline.named_steps['preprocessing'].get_feature_names_out()
+
+            # Obtener coeficientes del modelo
+            coeffs = pipeline.named_steps['model'].coef_[0]
+
+            # Crear dataframe
+            importance = pd.DataFrame({
+                'feature': feature_names,
+                'coef': coeffs
+            })
+
+            # Ordenar por impacto absoluto
+            importance['abs_coef'] = importance['coef'].abs()
+            importance = importance.sort_values(by='abs_coef', ascending=False)
+
+            print("\nTop 10 variables más importantes:")
+            print(importance[['feature', 'coef']].head(10))
+
+        # =============================
+        #  OPTIMIZACIÓN DE THRESHOLD
+        # =============================
+
+        best_threshold = evaluate_thresholds(y_test, probs_test)
 
         preds_test = (probs_test >= best_threshold).astype(int)
 
         report = classification_report(y_test, preds_test, output_dict=True)
 
         recall_0 = recall_score(y_test, preds_test, pos_label=0)
+
         auc_test = roc_auc_score(y_test, probs_test)
 
+        # =============================
+        # Guardar resultados
+        # =============================
+        
         results.append({
             "Modelo": name,
             "AUC": auc_test,
@@ -205,29 +234,13 @@ def evaluate_models():
     print(df_results)
 
     # =============================
-    # Mejor modelo
+    #  Selección del mejor modelo
     # =============================
     best_model = df_results.sort_values(by="Recall_Clase_0", ascending=False).iloc[0]
 
-    best_model_name = best_model["Modelo"]
-    best_pipeline = pipelines[best_model_name]
-    best_threshold = best_model["Threshold"]
-
-    print("\nMEJOR MODELO:")
+    print("\n MEJOR MODELO (NEGOCIO):")
     print(best_model)
 
-    # =============================
-    # Guardado
-    # =============================
-    
-    joblib.dump(best_pipeline, "model.pkl")
-
-    with open("threshold.txt", "w") as f:
-        f.write(str(best_threshold))
-
-    print(f"\nModelo guardado como model.pkl ({best_model_name})")
-    print(f"Threshold guardado: {best_threshold:.2f}")
-    
 
 # =============================
 # Ejecutar
